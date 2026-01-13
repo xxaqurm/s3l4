@@ -16,7 +16,7 @@
 
 using namespace std;
 
-constexpr int THREADS = 10;        // Default number of threads
+constexpr int THREADS = 7;        // Default number of threads
 constexpr int ITERATIONS = 10000;  // Default iterations per thread
 
 string randomChars(size_t len) {
@@ -188,40 +188,51 @@ public:
 };
 
 class SpinWaitTest {
-    atomic<int> cnt{0};
+    atomic<bool> ready{false};
     vector<size_t> thread_times;
+
 public:
     void benchmark() {
-        cnt.store(0);
+        ready.store(false, memory_order_relaxed);
         thread_times.assign(THREADS, 0);
         vector<thread> threads;
-        
+
         for (int i = 0; i < THREADS; ++i) {
             threads.emplace_back([this, i]() {
                 auto start = chrono::high_resolution_clock::now();
-                for (int j = 0; j < ITERATIONS; ++j) {
-                    cnt.fetch_add(1, memory_order_relaxed);  // Без синхронизации
-                    randomChars(5);
-                }
+
+                ready.wait(false, memory_order_acquire);
+
+                randomChars(5);
+
                 auto end = chrono::high_resolution_clock::now();
-                thread_times[i] = chrono::duration_cast<chrono::milliseconds>(end - start).count();
+                thread_times[i] =
+                    chrono::duration_cast<chrono::milliseconds>(end - start).count();
             });
         }
-        
+
+        // Даём потокам гарантированно встать на wait
+        this_thread::sleep_for(chrono::milliseconds(50));
+
+        ready.store(true, memory_order_release);
+        ready.notify_all();  // поднимаем все ожидающие потоки
+
         for (auto& t : threads) t.join();
+
         for (int i = 0; i < THREADS; ++i) {
             cout << "Thread " << i << " (" << thread_times[i] << " ms)\n";
         }
+
         size_t avg = accumulate(thread_times.begin(), thread_times.end(), 0LL) / THREADS;
         printStats(thread_times);
-        all_results.push_back({"SPINWAIT", avg});
+        all_results.push_back({"SPINWAIT (atomic_wait)", avg});
     }
 };
 
 
 class MonitorTest {
     mutex m;
-    condition_variable cv;
+    condition_variable cv;  // ожидание события
     queue<int> buffer;
     atomic<int> produced{0};
     vector<size_t> thread_times;
@@ -233,7 +244,7 @@ public:
         
         constexpr int HALF = THREADS / 2;
         
-        // Producer потоки - добавляют данные в буфер
+        // Producer
         for (int i = 0; i < HALF; ++i) {
             threads.emplace_back([this, i]() {
                 auto start = chrono::high_resolution_clock::now();
@@ -251,7 +262,7 @@ public:
             });
         }
         
-        // Consumer потоки - извлекают данные из буфера
+        // Consumer
         for (int i = HALF; i < THREADS; ++i) {
             threads.emplace_back([this, i]() {
                 auto start = chrono::high_resolution_clock::now();
@@ -259,11 +270,10 @@ public:
                 while (consumed < (ITERATIONS / 2)) {
                     {
                         unique_lock<mutex> lock(m);
-                        // Ждём, пока буфер не будет готов
-                        cv.wait(lock, [this]() { 
+                        cv.wait(lock, [this]() {  // Ждём, пока буфер не будет готов
                             return !buffer.empty() || produced.load() >= ITERATIONS; 
                         });
-                        
+
                         if (!buffer.empty()) {
                             buffer.pop();
                             consumed++;

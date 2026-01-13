@@ -171,16 +171,16 @@ void printResults(const ProcessResult& result, const string& label) {
     cout << "\n--- Сотрудники с зарплатой выше средней по отделу (" 
          << result.employees_above_avg.size() << " чел.) ---\n";
     cout << left << setw(30) << "ФИО" 
-         << setw(20) << "Должность" 
-         << setw(15) << "Отдел" 
-         << setw(15) << "Зарплата\n";
+         << setw(25) << "Должность" 
+         << setw(25) << "Отдел" 
+         << setw(25) << "Зарплата\n";
     cout << string(80, '-') << "\n";
     
     for (const auto& emp : result.employees_above_avg) {
-        cout << left << setw(30) << emp.name 
-             << setw(20) << emp.position 
-             << setw(15) << emp.department 
-             << setw(15) << fixed << setprecision(2) << emp.salary << "\n";
+        cout << left << setw(26) << emp.name 
+             << setw(25) << emp.position 
+             << setw(25) << emp.department 
+             << setw(25) << fixed << setprecision(2) << emp.salary << "\n";
     }
 }
 
