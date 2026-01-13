@@ -6,7 +6,6 @@
 #include <numeric>
 #include <chrono>
 #include <random>
-#include <cstdint>
 
 #include <thread>
 #include <mutex>
@@ -17,30 +16,33 @@
 
 using namespace std;
 
-constexpr int THREADS = 10;        // Number of threads
-constexpr int ITERATIONS = 10000;  // Iterations per thread
+constexpr int THREADS = 10;        // Default number of threads
+constexpr int ITERATIONS = 10000;  // Default iterations per thread
 
-string randomStr(int len) {
+string randomChars(size_t len) {
     static thread_local mt19937 gen(random_device{}());
     uniform_int_distribution<> dis(32, 126);
+
     string s;
     s.reserve(len);
-    for (int i = 0; i < len; ++i) s += (char)dis(gen);
+    for (int i = 0; i < len; ++i) {
+        s += static_cast<char>(dis(gen));
+    }
     return s;
 }
 
-void printStats(const vector<long long>& times) {
-    long long total = accumulate(times.begin(), times.end(), 0LL);
-    long long avg = total / times.size();
-    long long minTime = *min_element(times.begin(), times.end());
-    long long maxTime = *max_element(times.begin(), times.end());
+void printStats(const vector<size_t>& times) {
+    size_t total = accumulate(times.begin(), times.end(), 0LL);
+    size_t avg = total / times.size();
+    size_t minTime = *min_element(times.begin(), times.end());
+    size_t maxTime = *max_element(times.begin(), times.end());
     
     cout << "Avg: " << avg << " ms | Min: " << minTime << " ms | Max: " << maxTime << " ms\n";
 }
 
 struct TestResult {
     string name;
-    long long avg_time;
+    size_t avg_time;
 };
 
 vector<TestResult> all_results;
@@ -48,7 +50,7 @@ vector<TestResult> all_results;
 class MutexTest {
     mutex m;
     int cnt = 0;
-    vector<long long> thread_times;
+    vector<size_t> thread_times;
 public:
     void benchmark() {
         cnt = 0;
@@ -59,31 +61,34 @@ public:
             threads.emplace_back([this, i]() {
                 auto start = chrono::high_resolution_clock::now();
                 for (int j = 0; j < ITERATIONS; ++j) {
-                    { 
-                        lock_guard<mutex> lock(m);  // Захват мьютекса
-                        cnt++;                      // Критическая секция
-                    }                               // Автоматическое освобождение
-                    randomStr(5);                   // Работа вне критической секции
+                    {
+                        lock_guard<mutex> lock(m);
+                        cnt++;
+                    }
+                    randomChars(5);
                 }
                 auto end = chrono::high_resolution_clock::now();
                 thread_times[i] = chrono::duration_cast<chrono::milliseconds>(end - start).count();
             });
         }
         
-        for (auto& t : threads) t.join();
+        for (auto& t : threads) {
+            t.join();
+        }
+
         for (int i = 0; i < THREADS; ++i) {
             cout << "Thread " << i << " (" << thread_times[i] << " ms)\n";
         }
-        long long avg = accumulate(thread_times.begin(), thread_times.end(), 0LL) / THREADS;
+        size_t avg = accumulate(thread_times.begin(), thread_times.end(), 0LL) / THREADS;
         printStats(thread_times);
         all_results.push_back({"MUTEX", avg});
     }
 };
 
 class SemaphoreTest {
-    counting_semaphore<1> sem{1};  // Максимум 1 разрешение
+    counting_semaphore<1> sem{1};  // максимум 1 поток
     int cnt = 0;
-    vector<long long> thread_times;
+    vector<size_t> thread_times;
 public:
     void benchmark() {
         cnt = 0;
@@ -94,10 +99,10 @@ public:
             threads.emplace_back([this, i]() {
                 auto start = chrono::high_resolution_clock::now();
                 for (int j = 0; j < ITERATIONS; ++j) {
-                    sem.acquire();      // Захват семафора
-                    cnt++;              // Критическая секция
-                    randomStr(5);
-                    sem.release();      // Освобождение семафора
+                    sem.acquire();
+                    cnt++;
+                    sem.release();
+                    randomChars(5);
                 }
                 auto end = chrono::high_resolution_clock::now();
                 thread_times[i] = chrono::duration_cast<chrono::milliseconds>(end - start).count();
@@ -108,7 +113,7 @@ public:
         for (int i = 0; i < THREADS; ++i) {
             cout << "Thread " << i << " (" << thread_times[i] << " ms)\n";
         }
-        long long avg = accumulate(thread_times.begin(), thread_times.end(), 0LL) / THREADS;
+        size_t avg = accumulate(thread_times.begin(), thread_times.end(), 0LL) / THREADS;
         printStats(thread_times);
         all_results.push_back({"SEMAPHORE", avg});
     }
@@ -117,7 +122,7 @@ public:
 class BarrierTest {
     barrier<> bar{THREADS};
     int cnt = 0;
-    vector<long long> thread_times;
+    vector<size_t> thread_times;
 public:
     void benchmark() {
         cnt = 0;
@@ -129,9 +134,9 @@ public:
             for (int i = 0; i < THREADS; ++i) {
                 threads.emplace_back([this, i]() {
                     auto start = chrono::high_resolution_clock::now();
-                    randomStr(5);
-                    bar.arrive_and_wait();
+                    bar.arrive_and_wait();  // Синхронизация потоков
                     cnt++;
+                    randomChars(5);
                     auto end = chrono::high_resolution_clock::now();
                     thread_times[i] += chrono::duration_cast<chrono::milliseconds>(end - start).count();
                 });
@@ -141,7 +146,7 @@ public:
         for (int i = 0; i < THREADS; ++i) {
             cout << "Thread " << i << " (" << thread_times[i] << " ms)\n";
         }
-        long long avg = accumulate(thread_times.begin(), thread_times.end(), 0LL) / THREADS;
+        size_t avg = accumulate(thread_times.begin(), thread_times.end(), 0LL) / THREADS;
         printStats(thread_times);
         all_results.push_back({"BARRIER", avg});
     }
@@ -150,7 +155,7 @@ public:
 class SpinLockTest {
     atomic<bool> flag{false};
     int cnt = 0;
-    vector<long long> thread_times;
+    vector<size_t> thread_times;
 public:
     void benchmark() {
         cnt = 0;
@@ -163,11 +168,9 @@ public:
                 for (int j = 0; j < ITERATIONS; ++j) {
                     // Spin-wait: крутиться, пока не захватим лок
                     while (flag.exchange(true, memory_order_acquire));
-                    
-                    cnt++;              // Критическая секция
-                    randomStr(5);
-                    
-                    flag.store(false, memory_order_release);  // Освобождение
+                    cnt++;
+                    flag.store(false, memory_order_release);
+                    randomChars(5);
                 }
                 auto end = chrono::high_resolution_clock::now();
                 thread_times[i] = chrono::duration_cast<chrono::milliseconds>(end - start).count();
@@ -178,7 +181,7 @@ public:
         for (int i = 0; i < THREADS; ++i) {
             cout << "Thread " << i << " (" << thread_times[i] << " ms)\n";
         }
-        long long avg = accumulate(thread_times.begin(), thread_times.end(), 0LL) / THREADS;
+        size_t avg = accumulate(thread_times.begin(), thread_times.end(), 0LL) / THREADS;
         printStats(thread_times);
         all_results.push_back({"SPINLOCK", avg});
     }
@@ -186,7 +189,7 @@ public:
 
 class SpinWaitTest {
     atomic<int> cnt{0};
-    vector<long long> thread_times;
+    vector<size_t> thread_times;
 public:
     void benchmark() {
         cnt.store(0);
@@ -198,7 +201,7 @@ public:
                 auto start = chrono::high_resolution_clock::now();
                 for (int j = 0; j < ITERATIONS; ++j) {
                     cnt.fetch_add(1, memory_order_relaxed);  // Без синхронизации
-                    randomStr(5);
+                    randomChars(5);
                 }
                 auto end = chrono::high_resolution_clock::now();
                 thread_times[i] = chrono::duration_cast<chrono::milliseconds>(end - start).count();
@@ -209,7 +212,7 @@ public:
         for (int i = 0; i < THREADS; ++i) {
             cout << "Thread " << i << " (" << thread_times[i] << " ms)\n";
         }
-        long long avg = accumulate(thread_times.begin(), thread_times.end(), 0LL) / THREADS;
+        size_t avg = accumulate(thread_times.begin(), thread_times.end(), 0LL) / THREADS;
         printStats(thread_times);
         all_results.push_back({"SPINWAIT", avg});
     }
@@ -221,7 +224,7 @@ class MonitorTest {
     condition_variable cv;
     queue<int> buffer;
     atomic<int> produced{0};
-    vector<long long> thread_times;
+    vector<size_t> thread_times;
 public:
     void benchmark() {
         produced.store(0);
@@ -241,7 +244,7 @@ public:
                         produced.fetch_add(1);
                     }
                     cv.notify_one();              // Пробудить ожидающий thread
-                    randomStr(5);
+                    randomChars(5);               // Работа вне критической секции
                 }
                 auto end = chrono::high_resolution_clock::now();
                 thread_times[i] = chrono::duration_cast<chrono::milliseconds>(end - start).count();
@@ -266,7 +269,7 @@ public:
                             consumed++;
                         }
                     }
-                    randomStr(5);
+                    randomChars(5);
                 }
                 auto end = chrono::high_resolution_clock::now();
                 thread_times[i] = chrono::duration_cast<chrono::milliseconds>(end - start).count();
@@ -277,7 +280,7 @@ public:
         for (int i = 0; i < THREADS; ++i) {
             cout << "Thread " << i << " (" << thread_times[i] << " ms)\n";
         }
-        long long avg = accumulate(thread_times.begin(), thread_times.end(), 0LL) / THREADS;
+        size_t avg = accumulate(thread_times.begin(), thread_times.end(), 0LL) / THREADS;
         printStats(thread_times);
         all_results.push_back({"MONITOR", avg});
     }
